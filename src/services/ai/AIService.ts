@@ -84,7 +84,7 @@ export class AIService {
             apiKey: this.settings.openrouterKey,
             dangerouslyAllowBrowser: true,
             defaultHeaders: {
-                'HTTP-Referer': 'http://localhost:5173',
+                'HTTP-Referer': 'http://localhost:1420',
                 'X-Title': 'Story Forge Desktop',
             }
         });
@@ -94,8 +94,19 @@ export class AIService {
         if (!this.settings?.openaiKey) return;
 
         this.openAI = new OpenAI({
+            baseURL: "https://api.poe.com/v1",
             apiKey: this.settings.openaiKey,
-            dangerouslyAllowBrowser: true
+            dangerouslyAllowBrowser: true,
+	      defaultHeaders: {
+    'x-stainless-arch': null,
+    'x-stainless-lang': null,
+    'x-stainless-os': null,
+    'x-stainless-package-version': null,
+    'x-stainless-retry-count': null,
+    'x-stainless-runtime': null,
+    'x-stainless-runtime-version': null,
+    'x-stainless-timeout': null,
+  }
         });
     }
 
@@ -176,7 +187,7 @@ export class AIService {
 
     private async fetchOpenAIModels(): Promise<AIModel[]> {
         // Implementation for OpenAI models fetch
-        const response = await fetch('https://api.openai.com/v1/models', {
+        const response = await fetch('https://api.poe.com/v1/models', {
             headers: {
                 'Authorization': `Bearer ${this.settings?.openaiKey}`
             }
@@ -186,7 +197,7 @@ export class AIService {
         const data = await response.json();
 
         return data.data
-            .filter((model: any) => model.id.startsWith('gpt'))
+//            .filter((model: any) => model.id.startsWith('gpt'))
             .map((model: any) => ({
                 id: model.id,
                 name: model.id,

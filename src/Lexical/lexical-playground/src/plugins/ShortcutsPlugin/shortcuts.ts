@@ -254,7 +254,7 @@ export function isClearFormatting(event: KeyboardEvent): boolean {
 export function isInsertSceneBeat(event: KeyboardEvent): boolean {
   const { code, shiftKey, altKey, metaKey, ctrlKey } = event;
   return (
-    code === 'KeyS' &&
+    code === 'KeyW' &&
     !shiftKey &&
     altKey &&
     !controlOrMeta(metaKey, ctrlKey)
