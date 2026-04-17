@@ -599,10 +599,9 @@ export class AIService {
                 cache_control: { type: 'ephemeral' },
             }];
         }
-        if (top_k !== undefined && top_k !== 0) body.top_k = top_k;
-        // Claude rejects `temperature` + `top_p` together, and doesn't support
-        // repetition_penalty or min_p at all. We prefer temperature, so top_p
-        // is intentionally dropped here.
+        // Only `temperature` is forwarded. Claude rejects `temperature` + `top_p`
+        // together, and doesn't support repetition_penalty or min_p at all.
+        // top_k is also intentionally dropped.
 
         this.abortController = new AbortController();
 
