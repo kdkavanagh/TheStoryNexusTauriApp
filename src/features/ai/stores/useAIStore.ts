@@ -184,6 +184,17 @@ export const useAIStore = create<AIState>((set, get) => ({
                     repetition_penalty,
                     min_p
                 );
+            case 'claude':
+                return aiService.generateWithClaude(
+                    messages,
+                    selectedModel.id,
+                    temperature,
+                    maxTokens,
+                    top_p,
+                    top_k,
+                    repetition_penalty,
+                    min_p
+                );
             default:
                 throw new Error(`Unsupported provider: ${selectedModel.provider}`);
         }
@@ -236,6 +247,17 @@ export const useAIStore = create<AIState>((set, get) => ({
                 );
             case 'openrouter':
                 return aiService.generateWithOpenRouter(
+                    messages,
+                    selectedModel.id,
+                    temperature,
+                    maxTokens,
+                    top_p,
+                    top_k,
+                    repetition_penalty,
+                    min_p
+                );
+            case 'claude':
+                return aiService.generateWithClaude(
                     messages,
                     selectedModel.id,
                     temperature,

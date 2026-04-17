@@ -6,6 +6,8 @@ export class AIService {
     private static instance: AIService;
     private settings: AISettings | null = null;
     private readonly LOCAL_API_URL = 'http://localhost:1234/v1';
+    private readonly CLAUDE_API_URL = 'https://api.anthropic.com/v1';
+    private readonly CLAUDE_API_VERSION = '2023-06-01';
     private openRouter: OpenAI | null = null;
     private openAI: OpenAI | null = null;
     private abortController: AbortController | null = null;
@@ -116,7 +118,8 @@ export class AIService {
         console.log(`[AIService] Updating key for provider: ${provider}`);
         const update: Partial<AISettings> = {
             ...(provider === 'openai' && { openaiKey: key }),
-            ...(provider === 'openrouter' && { openrouterKey: key })
+            ...(provider === 'openrouter' && { openrouterKey: key }),
+            ...(provider === 'claude' && { claudeKey: key })
         };
 
         console.log(`[AIService] Updating database with new key for ${provider}`);
@@ -160,6 +163,12 @@ export class AIService {
                     if (this.settings.openrouterKey) {
                         console.log('[AIService] Fetching OpenRouter models');
                         models = await this.fetchOpenRouterModels();
+                    }
+                    break;
+                case 'claude':
+                    if (this.settings.claudeKey) {
+                        console.log('[AIService] Fetching Claude models');
+                        models = await this.fetchClaudeModels();
                     }
                     break;
             }
@@ -222,6 +231,27 @@ export class AIService {
             name: model.name,
             provider: 'openrouter' as AIProvider,
             contextLength: model.context_length,
+            enabled: true
+        }));
+    }
+
+    private async fetchClaudeModels(): Promise<AIModel[]> {
+        const response = await fetch(`${this.CLAUDE_API_URL}/models`, {
+            headers: {
+                'x-api-key': this.settings?.claudeKey ?? '',
+                'anthropic-version': this.CLAUDE_API_VERSION,
+                'anthropic-dangerous-direct-browser-access': 'true'
+            }
+        });
+
+        if (!response.ok) throw new Error('Failed to fetch Claude models');
+        const data = await response.json();
+
+        return data.data.map((model: any) => ({
+            id: model.id,
+            name: model.display_name || model.id,
+            provider: 'claude' as AIProvider,
+            contextLength: model.max_input_tokens ?? 200000,
             enabled: true
         }));
     }
@@ -509,6 +539,160 @@ export class AIService {
         }
     }
 
+    async generateWithClaude(
+        messages: PromptMessage[],
+        modelId: string,
+        temperature: number = 1.0,
+        maxTokens: number = 2048,
+        top_p?: number,
+        top_k?: number,
+        repetition_penalty?: number,
+        min_p?: number
+    ): Promise<Response> {
+        if (!this.settings?.claudeKey) {
+            throw new Error('Claude API key not set');
+        }
+
+        // Claude requires system messages as a top-level field, not in messages[]
+        const systemParts: string[] = [];
+        const userMessages: PromptMessage[] = [];
+        for (const m of messages) {
+            if (m.role === 'system') {
+                systemParts.push(m.content);
+            } else {
+                userMessages.push(m);
+            }
+        }
+
+        // Enable prompt caching on the two highest-value breakpoints:
+        //   1. The system prompt — stable across turns, often the largest block.
+        //   2. The final message — sets up a cache prefix covering the full
+        //      conversation so the next turn can read it back.
+        // Claude silently ignores cache_control on content below the minimum
+        // cacheable size, so it's safe to set unconditionally.
+        const preparedMessages = userMessages.map((m, i) => {
+            if (i !== userMessages.length - 1) return m;
+            return {
+                role: m.role,
+                content: [{
+                    type: 'text',
+                    text: m.content,
+                    cache_control: { type: 'ephemeral' },
+                }],
+            };
+        });
+
+        const body: Record<string, unknown> = {
+            model: modelId,
+            messages: preparedMessages,
+            max_tokens: maxTokens,
+            temperature,
+            stream: true,
+        };
+        if (systemParts.length > 0) {
+            body.system = [{
+                type: 'text',
+                text: systemParts.join('\n\n'),
+                cache_control: { type: 'ephemeral' },
+            }];
+        }
+        if (top_p !== undefined && top_p !== 0) body.top_p = top_p;
+        if (top_k !== undefined && top_k !== 0) body.top_k = top_k;
+        // Claude doesn't support repetition_penalty or min_p; silently ignore.
+
+        this.abortController = new AbortController();
+
+        let upstream: Response;
+        try {
+            upstream = await fetch(`${this.CLAUDE_API_URL}/messages`, {
+                method: 'POST',
+                headers: {
+                    'x-api-key': this.settings.claudeKey,
+                    'anthropic-version': this.CLAUDE_API_VERSION,
+                    'anthropic-dangerous-direct-browser-access': 'true',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(body),
+                signal: this.abortController.signal,
+            });
+        } catch (error) {
+            if ((error as Error).name === 'AbortError') {
+                return new Response(null, { status: 204 });
+            }
+            throw error;
+        }
+
+        if (!upstream.ok || !upstream.body) {
+            const errText = await upstream.text().catch(() => '');
+            throw new Error(`Claude API error ${upstream.status}: ${errText}`);
+        }
+
+        // Translate Claude SSE events into the OpenAI-style chunks expected by processStreamedResponse.
+        const reader = upstream.body.getReader();
+        const decoder = new TextDecoder();
+        const encoder = new TextEncoder();
+
+        const responseStream = new ReadableStream({
+            async start(controller) {
+                let buffer = '';
+                try {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        buffer += decoder.decode(value, { stream: true });
+
+                        // SSE events are separated by blank lines.
+                        let sepIdx: number;
+                        while ((sepIdx = buffer.indexOf('\n\n')) !== -1) {
+                            const rawEvent = buffer.slice(0, sepIdx);
+                            buffer = buffer.slice(sepIdx + 2);
+
+                            // Collect data: lines (ignore event: line — the JSON carries `type`).
+                            const dataLines: string[] = [];
+                            for (const line of rawEvent.split('\n')) {
+                                if (line.startsWith('data:')) {
+                                    dataLines.push(line.slice(5).trim());
+                                }
+                            }
+                            if (dataLines.length === 0) continue;
+
+                            const payload = dataLines.join('\n');
+                            try {
+                                const json = JSON.parse(payload);
+                                if (
+                                    json.type === 'content_block_delta' &&
+                                    json.delta?.type === 'text_delta' &&
+                                    typeof json.delta.text === 'string' &&
+                                    json.delta.text.length > 0
+                                ) {
+                                    const formatted = `data: ${JSON.stringify({
+                                        choices: [{ delta: { content: json.delta.text } }]
+                                    })}\n\n`;
+                                    controller.enqueue(encoder.encode(formatted));
+                                }
+                                // message_stop, message_delta, ping etc. are no-ops for content streaming.
+                            } catch {
+                                // Ignore non-JSON data lines.
+                            }
+                        }
+                    }
+                    controller.close();
+                } catch (error) {
+                    if ((error as Error).name === 'AbortError') {
+                        console.log('Claude stream aborted');
+                        controller.close();
+                    } else {
+                        controller.error(error);
+                    }
+                }
+            }
+        });
+
+        return new Response(responseStream, {
+            headers: { 'Content-Type': 'text/event-stream' }
+        });
+    }
+
     // Add getter methods for settings
     getOpenAIKey(): string | undefined {
         return this.settings?.openaiKey;
@@ -516,6 +700,10 @@ export class AIService {
 
     getOpenRouterKey(): string | undefined {
         return this.settings?.openrouterKey;
+    }
+
+    getClaudeKey(): string | undefined {
+        return this.settings?.claudeKey;
     }
 
     getLocalApiUrl(): string {

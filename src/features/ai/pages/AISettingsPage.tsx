@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { aiService } from '@/services/ai/AIService';
+import { globalStateService } from '@/services/globalStateService';
 import { toast } from 'react-toastify';
 import { AIModel } from '@/types/story';
 import { cn } from '@/lib/utils';
@@ -13,11 +14,14 @@ import { cn } from '@/lib/utils';
 export default function AISettingsPage() {
     const [openaiKey, setOpenaiKey] = useState('');
     const [openrouterKey, setOpenrouterKey] = useState('');
+    const [claudeKey, setClaudeKey] = useState('');
     const [localApiUrl, setLocalApiUrl] = useState('http://localhost:1234/v1');
     const [isLoading, setIsLoading] = useState(false);
     const [openaiModels, setOpenaiModels] = useState<AIModel[]>([]);
     const [openrouterModels, setOpenrouterModels] = useState<AIModel[]>([]);
+    const [claudeModels, setClaudeModels] = useState<AIModel[]>([]);
     const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
+    const [isSyncing, setIsSyncing] = useState(false);
 
     useEffect(() => {
         loadInitialData();
@@ -31,11 +35,13 @@ export default function AISettingsPage() {
             // Set the keys using the new getter methods
             const openaiKey = aiService.getOpenAIKey();
             const openrouterKey = aiService.getOpenRouterKey();
+            const claudeKey = aiService.getClaudeKey();
             const localApiUrl = aiService.getLocalApiUrl();
 
             console.log('[AISettingsPage] Retrieved API keys and URL from service');
             if (openaiKey) setOpenaiKey(openaiKey);
             if (openrouterKey) setOpenrouterKey(openrouterKey);
+            if (claudeKey) setClaudeKey(claudeKey);
             if (localApiUrl) setLocalApiUrl(localApiUrl);
 
             console.log('[AISettingsPage] Getting all available models');
@@ -46,18 +52,26 @@ export default function AISettingsPage() {
             const localModels = allModels.filter(m => m.provider === 'local');
             const openaiModels = allModels.filter(m => m.provider === 'openai');
             const openrouterModels = allModels.filter(m => m.provider === 'openrouter');
+            const claudeModels = allModels.filter(m => m.provider === 'claude');
 
-            console.log(`[AISettingsPage] Filtered models - Local: ${localModels.length}, OpenAI: ${openaiModels.length}, OpenRouter: ${openrouterModels.length}`);
+            console.log(`[AISettingsPage] Filtered models - Local: ${localModels.length}, OpenAI: ${openaiModels.length}, OpenRouter: ${openrouterModels.length}, Claude: ${claudeModels.length}`);
 
             setOpenaiModels(openaiModels);
             setOpenrouterModels(openrouterModels);
+            setClaudeModels(claudeModels);
         } catch (error) {
             console.error('Error loading AI settings:', error);
             toast.error('Failed to load AI settings');
         }
     };
 
-    const handleKeyUpdate = async (provider: 'openai' | 'openrouter' | 'local', key: string) => {
+    const providerLabel = (provider: 'openai' | 'openrouter' | 'claude' | 'local') =>
+        provider === 'openai' ? 'OpenAI'
+            : provider === 'openrouter' ? 'OpenRouter'
+                : provider === 'claude' ? 'Claude'
+                    : 'Local';
+
+    const handleKeyUpdate = async (provider: 'openai' | 'openrouter' | 'claude' | 'local', key: string) => {
         if (provider !== 'local' && !key.trim()) return;
 
         setIsLoading(true);
@@ -74,6 +88,9 @@ export default function AISettingsPage() {
             } else if (provider === 'openrouter') {
                 setOpenrouterModels(models);
                 setOpenSections(prev => ({ ...prev, openrouter: true }));
+            } else if (provider === 'claude') {
+                setClaudeModels(models);
+                setOpenSections(prev => ({ ...prev, claude: true }));
             } else if (provider === 'local') {
                 console.log(`[AISettingsPage] Updating local models, received ${models.length} models`);
                 setOpenaiModels(prev => {
@@ -86,7 +103,7 @@ export default function AISettingsPage() {
                 setOpenSections(prev => ({ ...prev, local: true }));
             }
 
-            toast.success(`${provider === 'openai' ? 'OpenAI' : provider === 'openrouter' ? 'OpenRouter' : 'Local'} models updated successfully`);
+            toast.success(`${providerLabel(provider)} models updated successfully`);
         } catch (error) {
             toast.error(`Failed to update ${provider} models`);
         } finally {
@@ -94,7 +111,7 @@ export default function AISettingsPage() {
         }
     };
 
-    const handleRefreshModels = async (provider: 'openai' | 'openrouter' | 'local') => {
+    const handleRefreshModels = async (provider: 'openai' | 'openrouter' | 'claude' | 'local') => {
         setIsLoading(true);
         console.log(`[AISettingsPage] Refreshing models for provider: ${provider}`);
         try {
@@ -111,6 +128,10 @@ export default function AISettingsPage() {
                     setOpenrouterModels(models);
                     setOpenSections(prev => ({ ...prev, openrouter: true }));
                     break;
+                case 'claude':
+                    setClaudeModels(models);
+                    setOpenSections(prev => ({ ...prev, claude: true }));
+                    break;
                 case 'local':
                     console.log(`[AISettingsPage] Updating local models, received ${models.length} models`);
                     setOpenaiModels(prev => {
@@ -124,7 +145,7 @@ export default function AISettingsPage() {
                     break;
             }
 
-            toast.success(`${provider === 'openai' ? 'OpenAI' : provider === 'openrouter' ? 'OpenRouter' : 'Local'} models refreshed`);
+            toast.success(`${providerLabel(provider)} models refreshed`);
         } catch (error) {
             console.error(`Error refreshing ${provider} models:`, error);
             toast.error(`Failed to refresh ${provider} models`);
@@ -167,12 +188,66 @@ export default function AISettingsPage() {
         setOpenSections(prev => ({ ...prev, [section]: !prev[section] }));
     };
 
+    const handleSaveToServer = async () => {
+        setIsSyncing(true);
+        try {
+            const { bytes } = await globalStateService.saveToServer();
+            toast.success(`Saved global state to server (${(bytes / 1024).toFixed(1)} KB)`);
+        } catch (error) {
+            console.error('Save to server failed:', error);
+            toast.error(`Save failed: ${(error as Error).message}`);
+        } finally {
+            setIsSyncing(false);
+        }
+    };
+
+    const handleLoadFromServer = async () => {
+        const confirmed = window.confirm(
+            'Load will REPLACE your current browser state (stories, prompts, AI settings) with the copy saved on the server. Continue?'
+        );
+        if (!confirmed) return;
+
+        setIsSyncing(true);
+        try {
+            const { stories } = await globalStateService.loadFromServer();
+            toast.success(`Loaded global state from server (${stories} stories)`);
+            // Reload so every component re-reads from the now-replaced Dexie tables.
+            window.location.reload();
+        } catch (error) {
+            console.error('Load from server failed:', error);
+            toast.error(`Load failed: ${(error as Error).message}`);
+            setIsSyncing(false);
+        }
+    };
+
     return (
         <div className="p-8">
             <div className="max-w-2xl mx-auto">
                 <h1 className="text-3xl font-bold mb-8">AI Settings</h1>
 
                 <div className="space-y-6">
+                    {/* Server Sync Section */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Server Sync</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <p className="text-sm text-muted-foreground">
+                                Save your stories, AI settings, and custom prompts to a JSON file on the dev server,
+                                then restore them in any browser that points at the same dev server.
+                                Load will replace the current browser's local state.
+                            </p>
+                            <div className="flex gap-2">
+                                <Button onClick={handleSaveToServer} disabled={isSyncing}>
+                                    {isSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save to Server'}
+                                </Button>
+                                <Button variant="outline" onClick={handleLoadFromServer} disabled={isSyncing}>
+                                    {isSyncing ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Load from Server'}
+                                </Button>
+                            </div>
+                        </CardContent>
+                    </Card>
+
                     {/* OpenAI Section */}
                     <Card>
                         <CardHeader>
@@ -281,6 +356,68 @@ export default function AISettingsPage() {
                                     </CollapsibleTrigger>
                                     <CollapsibleContent className="mt-2 space-y-2">
                                         {openrouterModels.map(model => (
+                                            <div key={model.id} className="text-sm pl-6">
+                                                {model.name}
+                                            </div>
+                                        ))}
+                                    </CollapsibleContent>
+                                </Collapsible>
+                            )}
+                        </CardContent>
+                    </Card>
+
+                    {/* Claude Section */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle className="flex justify-between items-center">
+                                Claude Configuration
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => handleRefreshModels('claude')}
+                                    disabled={isLoading || !claudeKey.trim()}
+                                >
+                                    {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Refresh Models'}
+                                </Button>
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-4">
+                            <div className="grid gap-2">
+                                <Label htmlFor="claude-key">Claude API Key</Label>
+                                <div className="flex gap-2">
+                                    <Input
+                                        id="claude-key"
+                                        type="password"
+                                        placeholder="Enter your Claude API key"
+                                        value={claudeKey}
+                                        onChange={(e) => setClaudeKey(e.target.value)}
+                                    />
+                                    <Button
+                                        onClick={() => handleKeyUpdate('claude', claudeKey)}
+                                        disabled={isLoading || !claudeKey.trim()}
+                                    >
+                                        {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}
+                                    </Button>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                    Uses the Anthropic Messages API at https://api.anthropic.com/v1
+                                </p>
+                            </div>
+
+                            {claudeModels.length > 0 && (
+                                <Collapsible
+                                    open={openSections.claude}
+                                    onOpenChange={() => toggleSection('claude')}
+                                >
+                                    <CollapsibleTrigger className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
+                                        <ChevronRight className={cn(
+                                            "h-4 w-4 transition-transform",
+                                            openSections.claude && "transform rotate-90"
+                                        )} />
+                                        Available Models
+                                    </CollapsibleTrigger>
+                                    <CollapsibleContent className="mt-2 space-y-2">
+                                        {claudeModels.map(model => (
                                             <div key={model.id} className="text-sm pl-6">
                                                 {model.name}
                                             </div>
