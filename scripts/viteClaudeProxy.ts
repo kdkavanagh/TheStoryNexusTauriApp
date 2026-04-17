@@ -60,6 +60,30 @@ export function claudeProxy(opts: Options = {}): Plugin {
             res.setHeader(key, value);
         });
 
+        // On non-2xx, buffer the response so we can log headers + body. Error
+        // responses are small JSON; streaming isn't needed. 2xx still streams.
+        if (!upstream.ok) {
+            const rateHeaders: Record<string, string> = {};
+            upstream.headers.forEach((v, k) => {
+                const lk = k.toLowerCase();
+                if (
+                    lk.startsWith('anthropic-ratelimit-') ||
+                    lk === 'retry-after' ||
+                    lk === 'request-id' ||
+                    lk === 'anthropic-organization-id'
+                ) {
+                    rateHeaders[k] = v;
+                }
+            });
+            const text = upstream.body ? await upstream.text() : '';
+            console.error(
+                `[claude-proxy] ${req.method} ${req.url} → ${upstream.status}`,
+                { headers: rateHeaders, body: text.slice(0, 2000) },
+            );
+            res.end(text);
+            return;
+        }
+
         if (!upstream.body) {
             res.end();
             return;
