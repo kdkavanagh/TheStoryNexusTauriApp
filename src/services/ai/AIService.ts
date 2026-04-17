@@ -6,7 +6,11 @@ export class AIService {
     private static instance: AIService;
     private settings: AISettings | null = null;
     private readonly LOCAL_API_URL = 'http://localhost:1234/v1';
-    private readonly CLAUDE_API_URL = 'https://api.anthropic.com/v1';
+    // Routed through the dev-server proxy (scripts/viteClaudeProxy.ts) which
+    // forwards to https://api.anthropic.com. Same-origin request → no browser
+    // CORS, and the proxy strips Origin/Referer so org-level browser-access
+    // restrictions don't trip.
+    private readonly CLAUDE_API_URL = '/api/claude/v1';
     private readonly CLAUDE_API_VERSION = '2023-06-01';
     private openRouter: OpenAI | null = null;
     private openAI: OpenAI | null = null;
@@ -240,7 +244,6 @@ export class AIService {
             headers: {
                 'x-api-key': this.settings?.claudeKey ?? '',
                 'anthropic-version': this.CLAUDE_API_VERSION,
-                'anthropic-dangerous-direct-browser-access': 'true'
             }
         });
 
@@ -609,7 +612,6 @@ export class AIService {
                 headers: {
                     'x-api-key': this.settings.claudeKey,
                     'anthropic-version': this.CLAUDE_API_VERSION,
-                    'anthropic-dangerous-direct-browser-access': 'true',
                     'Content-Type': 'application/json',
                 },
                 body: JSON.stringify(body),

@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 import { stateServer } from "./scripts/viteStateServer";
+import { claudeProxy } from "./scripts/viteClaudeProxy";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -13,6 +14,7 @@ export default defineConfig(async () => ({
     stateServer({
       filePath: path.resolve(__dirname, "./.storynexus-state.json"),
     }),
+    claudeProxy(),
   ],
   resolve: {
     alias: {
