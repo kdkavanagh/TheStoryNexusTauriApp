@@ -124,6 +124,8 @@ export function PromptForm({ prompt, onSave, onCancel }: PromptFormProps) {
                 } else {
                     groups['Other'].push(model);
                 }
+            } else if (model.provider === 'claude') {
+                groups['Anthropic'].push(model);
             }
         });
 
