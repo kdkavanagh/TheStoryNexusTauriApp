@@ -599,9 +599,10 @@ export class AIService {
                 cache_control: { type: 'ephemeral' },
             }];
         }
-        if (top_p !== undefined && top_p !== 0) body.top_p = top_p;
         if (top_k !== undefined && top_k !== 0) body.top_k = top_k;
-        // Claude doesn't support repetition_penalty or min_p; silently ignore.
+        // Claude rejects `temperature` + `top_p` together, and doesn't support
+        // repetition_penalty or min_p at all. We prefer temperature, so top_p
+        // is intentionally dropped here.
 
         this.abortController = new AbortController();
 
